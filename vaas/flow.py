@@ -12,7 +12,9 @@ from contextlib import ExitStack
 from typing import NewType, Union, BinaryIO
 import random
 import time
+from threading import Lock
 
+from flask import Blueprint, request
 import numpy as np
 from scipy.interpolate import (
     RegularGridInterpolator as Interpolator,
@@ -20,6 +22,80 @@ from scipy.interpolate import (
 from scipy.integrate import (
     RK45 as Integrator,
 )
+
+__all__ = [
+    'app',
+    'Climate',
+]
+
+
+#--- Interface
+
+_g_climate: Climate = None
+_g_climate_lock: Lock = Lock()
+
+app = Blueprint(
+    name='flow',
+    import_name=__name__,
+)
+
+
+def get_climate():
+    global _g_climate
+
+    climate = _g_climate
+    if climate is not None:
+        return climate
+    
+    with _g_climate_lock:
+        if _g_climate is None:
+            root = Path(__file__).parent.parent / 'data'
+            _g_climate = Climate.from_files(
+                ugrd=root / 'UGRD-144x73.dat',
+                vgrd=root / 'VGRD-144x73.dat',
+                vvel=root / 'VVEL-144x73.dat',
+            )
+    
+    climate = _g_climate
+    assert climate is not None, \
+        "Dev error: something went wrong initializing 'climate'"
+    
+    return climate
+
+
+@app.route('/integrate', methods=['GET'])
+def integrate():
+    climate = get_climate()
+
+    t0 = request.args.getlist('t0')
+    t0 = [float(t) for t in t0]
+
+    y0 = request.args.getlist('y0')
+    y0 = [tuple(map(float, y.split(','))) for y in y0]
+
+    tf = request.args.getlist('tf')
+    tf = [float(t) for t in tf]
+    
+    assert len(t0) == len(y0) == len(tf), \
+        f"Expected the same lengths: {len(t0)=} {len(y0)=} {len(tf)=}"
+
+    ret = {}
+    for t0, y0, tf in zip(t0, y0, tf):
+        tt = []
+        yy = []
+        for t, y in climate.integrate(t0=t0, y0=y0, tf=tf):
+            y = y.tolist()
+
+            tt.append(t)
+            yy.append(y)
+        
+        ret.setdefault('t', []).append(tt)
+        ret.setdefault('y', []).append(yy)
+    
+    return ret
+
+
+#--- Functionality
 
 
 FileLike = NewType('FileLike', Union[BinaryIO, PathLike, str])
@@ -169,7 +245,7 @@ class Climate:
         t0: Sec,
         y0: Tuple[Prs, Lng, Lat],
         tf: Sec,
-    ) -> Tuple[Prs, Lng, Lat]:
+    ) -> Iterator[Tuple[Sec, Tuple[Prs, Lng, Lat]]]:
         _1_DAY_IN_SECONDS = 60 * 60 * 24
 
         y0 = np.array(y0)
@@ -188,6 +264,7 @@ class Climate:
             if message is not None:
                 print(f'{message = }')
 
+            t = integrator.t
             y = integrator.y
 
             if y[PRS] < 0: break
@@ -196,14 +273,14 @@ class Climate:
             y[y[LAT] < -90.0] += 180.0
             y[y[LAT] > 90.0] -= 180.0
 
-            yield y
+            yield t, y
 
             if integrator.status != 'running':
                 break
 
 
 def main():
-    root = Path(__file__).parent / 'data'
+    root = Path(__file__).parent.parent / 'data'
 
     climate = Climate.from_files(
         ugrd=root / 'UGRD-144x73.dat',
