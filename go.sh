@@ -23,28 +23,18 @@ go-Server() {
         ##
 }
 
-Integrate_url=http://${Server_host:?}:${Server_port:?}/flow/integrate
-Integrate_t0=0.0
-Integrate_y0=13.37,13.37,13.37
-Integrate_tf=100000
+go-Request() {
+    local url
+    url=${1:?need url}
 
-go-Integrate() {
-    exec < <(pexec python3 -m base64 <<EOF
-local t = {}
-local y = {}
-local v = integrate{t0=${Integrate_t0:?}, y0={${Integrate_y0:?}}, tf=${Integrate_tf:?}}
-for i = 1, #v do
-    t[#t+1] = v[i].t
-    y[#y+1] = v[i].y
-end
-return {t=t, y=y}
-EOF
+    exec < <(pexec python3 -m base64 \
+        ##
     )
 
     exec < <(pexec curl \
         --silent \
         --get \
-        "${Integrate_url:?}" \
+        "${url:?}" \
         --data-urlencode run@- \
         ##
     )
@@ -52,6 +42,29 @@ EOF
     pexec python3 -m json.tool \
         ##
 }
+
+Integrate_url=http://${Server_host:?}:${Server_port:?}/flow/integrate
+Integrate_t0=0.0
+Integrate_y0=13.37,13.37,13.37
+Integrate_tf=100000
+
+go-Integrate() {
+    pexec "${self:?}" Request \
+        "${Integrate_url:?}" \
+        <<EOF
+local t0 = ${Integrate_t0:?}
+local y0 = { ${Integrate_y0:?} }
+local tf = ${Integrate_tf:?}
+
+local t = {}, y = {}
+local trace = integrate{t0=t0, y0=y0, tf=tf}
+for i = 1, #trace do
+    t[#t+1], y[#y+1] = trace[i].t, trace[i].y
+end
+return {t=t, y=y}
+EOF
+}
+
 
 #---
 

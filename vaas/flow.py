@@ -87,34 +87,30 @@ function(integrate, untrusted_code)
     env.print = print
     local untrusted_function, message = load(untrusted_code, nil, 't', env)
     if not untrusted_function then return nil, message end
-    return pcall(untrusted_function)
+    debug.sethook(function() error("timeout") end, "", 1e6)
+    local success, ret = pcall(untrusted_function)
+    debug.sethook()
+    return success, ret
 end
 ''')
 
     def integrate(args: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # print(f'{args = !r}')
         t0 = args['t0']
         y0 = args['y0']
         y0 = (y0[1], y0[2], y0[3])
         tf = args['tf']
-
-        # print(f'{t0=!r} {y0=!r} {tf=!r}')
 
         ret = []
         for t, y in climate.integrate(t0=t0, y0=y0, tf=tf):
             # print(f'{t=!r} {y=!r}')
             y = y.tolist()
             ret.append({ 't': t, 'y': y })
-        # print(f'{ret=!r}')
+        return lua.table_from(ret)
 
-        ret = lua.table_from(ret)
-
-        return ret
-
-    v = func(integrate, run)
-    # print(f'{v = !r}')
-    success, ret = v
+    success, ret = func(integrate, run)
     if not success:
+        if not isinstance(ret, Exception):
+            ret = Exception(f'{ret!r}')
         raise ret
 
     def realize(x):
@@ -123,8 +119,7 @@ end
         except:
             return x
         else:
-            # print(f'{keys = !r}')
-            if 1 in keys and 2 in keys:
+            if 1 in keys:
                 return [realize(x[i]) for i in range(1, 1+len(x))]
             else:
                 return { k: realize(v) for k, v in x.items() }
