@@ -13,7 +13,9 @@ from typing import NewType, Union, BinaryIO
 import random
 import time
 from threading import Lock
+from base64 import urlsafe_b64decode as b64decode
 
+from lupa import LuaRuntime
 from flask import Blueprint, request
 import numpy as np
 from scipy.interpolate import (
@@ -63,35 +65,74 @@ def get_climate():
     return climate
 
 
+def get_lua():
+    return LuaRuntime(
+        unpack_returned_tuples=True,
+    )
+
+
 @app.route('/integrate', methods=['GET'])
 def integrate():
     climate = get_climate()
+    lua = get_lua()
 
-    t0 = request.args.getlist('t0')
-    t0 = [float(t) for t in t0]
-
-    y0 = request.args.getlist('y0')
-    y0 = [tuple(map(float, y.split(','))) for y in y0]
-
-    tf = request.args.getlist('tf')
-    tf = [float(t) for t in tf]
+    run = request.args.get('run')
+    run = b64decode(run)
+    run = run.decode('utf-8')
     
-    assert len(t0) == len(y0) == len(tf), \
-        f"Expected the same lengths: {len(t0)=} {len(y0)=} {len(tf)=}"
+    func = lua.eval(r'''
+function(integrate, untrusted_code)
+    local env = {};
+    env.integrate = integrate
+    env.print = print
+    local untrusted_function, message = load(untrusted_code, nil, 't', env)
+    if not untrusted_function then return nil, message end
+    return pcall(untrusted_function)
+end
+''')
 
-    ret = {}
-    for t0, y0, tf in zip(t0, y0, tf):
-        tt = []
-        yy = []
+    def integrate(args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        # print(f'{args = !r}')
+        t0 = args['t0']
+        y0 = args['y0']
+        y0 = (y0[1], y0[2], y0[3])
+        tf = args['tf']
+
+        # print(f'{t0=!r} {y0=!r} {tf=!r}')
+
+        ret = []
         for t, y in climate.integrate(t0=t0, y0=y0, tf=tf):
+            # print(f'{t=!r} {y=!r}')
             y = y.tolist()
+            ret.append({ 't': t, 'y': y })
+        # print(f'{ret=!r}')
 
-            tt.append(t)
-            yy.append(y)
-        
-        ret.setdefault('t', []).append(tt)
-        ret.setdefault('y', []).append(yy)
-    
+        ret = lua.table_from(ret)
+
+        return ret
+
+    v = func(integrate, run)
+    # print(f'{v = !r}')
+    success, ret = v
+    if not success:
+        raise ret
+
+    def realize(x):
+        try:
+            keys = list(x.keys())
+        except:
+            return x
+        else:
+            # print(f'{keys = !r}')
+            if 1 in keys and 2 in keys:
+                return [realize(x[i]) for i in range(1, 1+len(x))]
+            else:
+                return { k: realize(v) for k, v in x.items() }
+
+    # print(f'{ret=!r}')
+    ret = realize(ret)
+
+    # print(f'{ret=!r}')
     return ret
 
 

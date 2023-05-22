@@ -29,13 +29,23 @@ Integrate_y0=13.37,13.37,13.37
 Integrate_tf=100000
 
 go-Integrate() {
+    exec < <(pexec python3 -m base64 <<EOF
+local t = {}
+local y = {}
+local v = integrate{t0=${Integrate_t0:?}, y0={${Integrate_y0:?}}, tf=${Integrate_tf:?}}
+for i = 1, #v do
+    t[#t+1] = v[i].t
+    y[#y+1] = v[i].y
+end
+return {t=t, y=y}
+EOF
+    )
+
     exec < <(pexec curl \
         --silent \
         --get \
         "${Integrate_url:?}" \
-        --data-urlencode t0="${Integrate_t0:?}" \
-        --data-urlencode y0="${Integrate_y0:?}" \
-        --data-urlencode tf="${Integrate_tf:?}" \
+        --data-urlencode run@- \
         ##
     )
 
