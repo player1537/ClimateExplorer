@@ -6,10 +6,15 @@ from __future__ import annotations
 
 from flask import Flask
 
+from .code import app as code_app
 from .flow import app as flow_app
 
 
 app = Flask(__name__)
+app.register_blueprint(
+    code_app,
+    url_prefix='/code',
+)
 app.register_blueprint(
     flow_app,
     url_prefix='/flow',
@@ -17,7 +22,7 @@ app.register_blueprint(
 
 
 def main():
-    app.run()
+    app.run(debug=True)
 
 
 def cli():

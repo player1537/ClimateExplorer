@@ -11,12 +11,13 @@ go---virtualenv() {
     exec "${self:?}" "$@"
 }
 
+Server_app=vaas/app:app
 Server_bind=127.0.0.1
 Server_host=127.0.0.1
 Server_port=5000
 
 go-Server() {
-    FLASK_APP='vaas/app:app' \
+    FLASK_APP=${Server_app:?} \
     FLASK_RUN_HOST=${Server_bind:?} \
     FLASK_RUN_PORT=${Server_port:?} \
     pexec flask run \
@@ -35,15 +36,17 @@ go-Request() {
         --silent \
         --get \
         "${url:?}" \
-        --data-urlencode run@- \
+        --data-urlencode code@- \
         ##
     )
+
+    pexec cat
 
     pexec python3 -m json.tool \
         ##
 }
 
-Integrate_url=http://${Server_host:?}:${Server_port:?}/flow/integrate
+Integrate_url=http://${Server_host:?}:${Server_port:?}/code/execute
 Integrate_t0=0.0
 Integrate_y0=13.37,13.37,13.37
 Integrate_tf=100000
@@ -56,12 +59,7 @@ local t0 = ${Integrate_t0:?}
 local y0 = { ${Integrate_y0:?} }
 local tf = ${Integrate_tf:?}
 
-local t = {}, y = {}
-local trace = integrate{t0=t0, y0=y0, tf=tf}
-for i = 1, #trace do
-    t[#t+1], y[#y+1] = trace[i].t, trace[i].y
-end
-return {t=t, y=y}
+return vaas_climate_integrate{t0=t0, y0=y0, tf=tf}
 EOF
 }
 

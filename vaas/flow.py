@@ -8,7 +8,7 @@ from os import PathLike
 from dataclasses import dataclass
 from pathlib import Path
 import struct
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from typing import NewType, Union, BinaryIO
 import random
 import time
@@ -16,7 +16,7 @@ from threading import Lock
 from base64 import urlsafe_b64decode as b64decode
 
 from lupa import LuaRuntime
-from flask import Blueprint, request
+from flask import Blueprint, request, g
 import numpy as np
 from scipy.interpolate import (
     RegularGridInterpolator as Interpolator,
@@ -42,33 +42,53 @@ app = Blueprint(
 )
 
 
-def get_climate():
+@app.before_app_request
+def register_climate():
+    def integrate(args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        t0 = args['t0']
+        y0 = args['y0']
+        y0 = (y0[1], y0[2], y0[3])
+        tf = args['tf']
+
+        with get_climate() as climate:
+            ret = []
+            for t, y in climate.integrate(t0=t0, y0=y0, tf=tf):
+                # print(f'{t=!r} {y=!r}')
+                y = y.tolist()
+                ret.append({ 't': t, 'y': y })
+
+        return ret
+
+    g.vaas_register('climate', 'integrate', integrate)
+
+
+def __get_climate():
+    root = Path(__file__).parent.parent / 'data'
+    return Climate.from_files(
+        ugrd=root / 'UGRD-144x73.dat',
+        vgrd=root / 'VGRD-144x73.dat',
+        vvel=root / 'VVEL-144x73.dat',
+    )
+
+
+def _get_climate():
     global _g_climate
 
-    climate = _g_climate
-    if climate is not None:
+    if (climate := _g_climate) is not None:
         return climate
     
-    with _g_climate_lock:
-        if _g_climate is None:
-            root = Path(__file__).parent.parent / 'data'
-            _g_climate = Climate.from_files(
-                ugrd=root / 'UGRD-144x73.dat',
-                vgrd=root / 'VGRD-144x73.dat',
-                vvel=root / 'VVEL-144x73.dat',
-            )
-    
-    climate = _g_climate
-    assert climate is not None, \
+    _g_climate = __get_climate()
+
+    assert (climate := _g_climate) is not None, \
         "Dev error: something went wrong initializing 'climate'"
     
     return climate
 
 
-def get_lua():
-    return LuaRuntime(
-        unpack_returned_tuples=True,
-    )
+@contextmanager
+def get_climate():
+    with _g_climate_lock:
+        yield _get_climate()
 
 
 @app.route('/integrate', methods=['GET'])
